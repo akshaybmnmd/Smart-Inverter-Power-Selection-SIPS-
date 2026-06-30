@@ -7,7 +7,8 @@ const std::string BMS2_MAC = "a5:c2:39:1d:e5:9b";
 
 // Replace with your BMS specific UUIDs
 const char* BMS_SERVICE_UUID = "FF00";
-const char* BMS_CHAR_UUID = "FF01";
+const char* BMS_CHAR_NOTIFY_UUID = "FF01";
+const char* BMS_CHAR_WRITE_UUID = "FF02";
 
 // The command to trigger live data
 uint8_t basicInfoCmd[] = { 0xDD, 0xA5, 0x03, 0x00, 0xFF, 0xFD, 0x77 };
@@ -19,8 +20,10 @@ const unsigned long TIMEOUT_MS = 2000;         // 2 seconds max to wait for a re
 enum AppState {
   STATE_WAIT_INTERVAL,
   STATE_CONNECT_BMS1,
+  STATE_DELAY_BMS1,  // NEW: Non-blocking wait state
   STATE_WAIT_BMS1_DATA,
   STATE_CONNECT_BMS2,
+  STATE_DELAY_BMS2,  // NEW: Non-blocking wait state
   STATE_WAIT_BMS2_DATA,
   STATE_PROCESS_LOGIC
 };
@@ -28,6 +31,7 @@ enum AppState {
 AppState currentState = STATE_WAIT_INTERVAL;
 unsigned long stateTimer = 0;
 NimBLEClient* pClient = nullptr;
+NimBLERemoteCharacteristic* pActiveWriteChar = nullptr;  // Globally track the write channel
 
 // --- Data Storage ---
 struct BmsData {
@@ -38,9 +42,7 @@ struct BmsData {
   int soc;
   int lastSoC;
   bool isConnected;
-  bool dataReady;  // Flag set by the callback when a full packet arrives
-
-  // Buffer for chunked BLE packets
+  bool dataReady;
   uint8_t buffer[64];
   size_t bufferIdx;
 };
@@ -119,11 +121,23 @@ void loop() {
 
     case STATE_CONNECT_BMS1:
       activeBms = &bms1Data;
-      if (requestDataFromBMS(BMS1_MAC)) {
-        stateTimer = millis();  // Start timeout timer
-        currentState = STATE_WAIT_BMS1_DATA;
+      if (connectAndSubscribe(BMS1_MAC)) {
+        stateTimer = millis();
+        currentState = STATE_DELAY_BMS1;  // Move to delay state
       } else {
-        currentState = STATE_CONNECT_BMS2;  // Skip if connection fails
+        currentState = STATE_CONNECT_BMS2;
+      }
+      break;
+
+    case STATE_DELAY_BMS1:
+      if (millis() - stateTimer >= 500) {  // 500ms non-blocking delay
+        if (triggerBmsRead()) {
+          stateTimer = millis();
+          currentState = STATE_WAIT_BMS1_DATA;
+        } else {
+          pClient->disconnect();
+          currentState = STATE_CONNECT_BMS2;
+        }
       }
       break;
 
@@ -132,7 +146,6 @@ void loop() {
         pClient->disconnect();
         currentState = STATE_CONNECT_BMS2;
       } else if (millis() - stateTimer >= TIMEOUT_MS) {
-        Serial.println("BMS 1 Request Timed Out.");
         activeBms->isConnected = false;
         pClient->disconnect();
         currentState = STATE_CONNECT_BMS2;
@@ -141,11 +154,23 @@ void loop() {
 
     case STATE_CONNECT_BMS2:
       activeBms = &bms2Data;
-      if (requestDataFromBMS(BMS2_MAC)) {
-        stateTimer = millis();  // Start timeout timer
-        currentState = STATE_WAIT_BMS2_DATA;
+      if (connectAndSubscribe(BMS2_MAC)) {
+        stateTimer = millis();
+        currentState = STATE_DELAY_BMS2;
       } else {
         currentState = STATE_PROCESS_LOGIC;
+      }
+      break;
+
+    case STATE_DELAY_BMS2:
+      if (millis() - stateTimer >= 500) {
+        if (triggerBmsRead()) {
+          stateTimer = millis();
+          currentState = STATE_WAIT_BMS2_DATA;
+        } else {
+          pClient->disconnect();
+          currentState = STATE_PROCESS_LOGIC;
+        }
       }
       break;
 
@@ -154,7 +179,6 @@ void loop() {
         pClient->disconnect();
         currentState = STATE_PROCESS_LOGIC;
       } else if (millis() - stateTimer >= TIMEOUT_MS) {
-        Serial.println("BMS 2 Request Timed Out.");
         activeBms->isConnected = false;
         pClient->disconnect();
         currentState = STATE_PROCESS_LOGIC;
@@ -164,7 +188,8 @@ void loop() {
     case STATE_PROCESS_LOGIC:
       evaluateContactorLogic();
       activeBms = nullptr;
-      stateTimer = millis();  // Reset interval timer
+      pActiveWriteChar = nullptr;  // Clear pointer safely
+      stateTimer = millis();
       currentState = STATE_WAIT_INTERVAL;
       break;
   }
@@ -172,13 +197,15 @@ void loop() {
 
 // --- Helper Functions ---
 
-bool requestDataFromBMS(const std::string& macAddress) {
-  activeBms->dataReady = false;
+bool connectAndSubscribe(const std::string& macAddress) {
+  activeBms->dataReady = false; 
   activeBms->bufferIdx = 0;
   memset(activeBms->buffer, 0, 64);
-
-  NimBLEAddress address(macAddress, BLE_ADDR_PUBLIC);
-
+  pActiveWriteChar = nullptr; 
+  
+  // Reverted to PUBLIC based on your old code's success
+  NimBLEAddress address(macAddress, BLE_ADDR_PUBLIC); 
+  
   if (!pClient->connect(address)) {
     Serial.printf("Failed to connect to %s\n", macAddress.c_str());
     activeBms->isConnected = false;
@@ -187,29 +214,31 @@ bool requestDataFromBMS(const std::string& macAddress) {
 
   NimBLERemoteService* pService = pClient->getService(BMS_SERVICE_UUID);
   if (pService) {
-    NimBLERemoteCharacteristic* pChar = pService->getCharacteristic(BMS_CHAR_UUID);
-
-    if (pChar && pChar->canNotify()) {
-      // Subscribe to notifications using our global callback
-      pChar->subscribe(true, notifyCB);
-
-      // Write the basicInfoCmd to trigger the response
-      if (pChar->canWrite() || pChar->canWriteNoResponse()) {
-        pChar->writeValue(basicInfoCmd, sizeof(basicInfoCmd), false);
-        return true;  // Successfully connected, subscribed, and wrote command
-      } else {
-        Serial.println("Characteristic is not writable.");
-      }
+    NimBLERemoteCharacteristic* pNotifyChar = pService->getCharacteristic(BMS_CHAR_NOTIFY_UUID);
+    pActiveWriteChar = pService->getCharacteristic(BMS_CHAR_WRITE_UUID); // Store for the delay state
+    
+    if (pNotifyChar && pNotifyChar->canNotify()) {
+      pNotifyChar->subscribe(true, notifyCB);
+      return true; // Success so far, let the loop move to the Delay state
     } else {
-      Serial.println("Characteristic missing or cannot notify.");
+      Serial.println("Notify Characteristic missing or cannot notify.");
     }
   } else {
     Serial.println("Service missing.");
   }
-
-  // If we reach here, something failed after connecting
+  
   activeBms->isConnected = false;
   pClient->disconnect();
+  return false;
+}
+
+bool triggerBmsRead() {
+  if (pActiveWriteChar && (pActiveWriteChar->canWrite() || pActiveWriteChar->canWriteNoResponse())) {
+    // Notice the 'true' at the end - this matches your old code!
+    pActiveWriteChar->writeValue(basicInfoCmd, sizeof(basicInfoCmd), true); 
+    return true;
+  }
+  Serial.println("Write Characteristic missing or cannot write.");
   return false;
 }
 
