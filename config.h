@@ -34,4 +34,22 @@ struct BmsData {
   size_t bufferIdx;
 };
 
+enum SystemStatus {
+  STATUS_IDLE,
+  STATUS_CHARGING,
+  STATUS_DISCHARGING,
+  STATUS_ERROR
+};
+
+struct SystemMetrics {
+  float netCurrent;
+  float netPower;
+  int avgSoc;
+  int socDelta;
+  float minVoltage;
+  float voltageDelta;
+  float peakTemp;
+  SystemStatus status;
+};
+
 #endif

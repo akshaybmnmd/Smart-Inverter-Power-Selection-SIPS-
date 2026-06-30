@@ -14,6 +14,9 @@ enum AppState {
   STATE_PROCESS_LOGIC
 };
 
+// Instantiate global metrics object
+SystemMetrics sysMetrics;
+
 AppState currentState = STATE_WAIT_INTERVAL;
 unsigned long stateTimer = 0;
 
@@ -134,50 +137,41 @@ void evaluateContactorLogic() {
   Serial.println("\n--- Evaluating System State ---");
 
   if (bms1Data.isConnected && bms2Data.isConnected) {
-    // 1. Capacity & Health
-    int avgSoc = (bms1Data.soc + bms2Data.soc) / 2;
-    int socDelta = abs(bms1Data.soc - bms2Data.soc);
+    // 1. Calculations
+    sysMetrics.avgSoc = (bms1Data.soc + bms2Data.soc) / 2;
+    sysMetrics.socDelta = abs(bms1Data.soc - bms2Data.soc);
+    sysMetrics.minVoltage = min(bms1Data.voltage, bms2Data.voltage);
+    sysMetrics.voltageDelta = abs(bms1Data.voltage - bms2Data.voltage);
+    sysMetrics.peakTemp = max(bms1Data.maxTemp, bms2Data.maxTemp);
+    sysMetrics.netCurrent = bms1Data.current + bms2Data.current;
+    sysMetrics.netPower = bms1Data.power + bms2Data.power;
 
-    // 2. Voltage Metrics
-    float minVoltage = min(bms1Data.voltage, bms2Data.voltage);
-    float voltageDelta = abs(bms1Data.voltage - bms2Data.voltage);
-
-    // 3. Thermal Metrics
-    float sysMaxTemp = max(bms1Data.maxTemp, bms2Data.maxTemp);
-
-    // 4. Power & Current Flow
-    float netCurrent = bms1Data.current + bms2Data.current;
-    float netPower = bms1Data.power + bms2Data.power;
-
-    // System Status (Positive = Charging, Negative = Discharging)
-    const char* systemStatus = "IDLE";
-    if (netCurrent > 1.0) {
-      systemStatus = "CHARGING (Solar Active)";
-    } else if (netCurrent < -1.0) {
-      systemStatus = "DISCHARGING (Running on Battery)";
-    }
+    // 2. Set Status Enum
+    if (sysMetrics.netCurrent > 1.0) sysMetrics.status = STATUS_CHARGING;
+    else if (sysMetrics.netCurrent < -1.0) sysMetrics.status = STATUS_DISCHARGING;
+    else sysMetrics.status = STATUS_IDLE;
 
     // --- Print Telemetry ---
-    Serial.printf("System Status  : %s\n", systemStatus);
-    Serial.printf("Net Flow       : %.2f A (%.0f Watts)\n", netCurrent, netPower);
-    Serial.printf("Average SoC    : %d%% (Imbalance: %d%%)\n", avgSoc, socDelta);
-    Serial.printf("Min Voltage    : %.2f V (Delta: %.3f V)\n", minVoltage, voltageDelta);
-    Serial.printf("Peak Temp      : %.1f °C\n", sysMaxTemp);
+    Serial.printf("System Status  : %s\n", sysMetrics.status);
+    Serial.printf("Net Flow       : %.2f A (%.0f Watts)\n", sysMetrics.netCurrent, sysMetrics.netPower);
+    Serial.printf("Average SoC    : %d%% (Imbalance: %d%%)\n", sysMetrics.avgSoc, sysMetrics.socDelta);
+    Serial.printf("Min Voltage    : %.2f V (Delta: %.3f V)\n", sysMetrics.minVoltage, sysMetrics.voltageDelta);
+    Serial.printf("Peak Temp      : %.1f °C\n", sysMetrics.peakTemp);
 
     // --- Advanced Switch Logic ---
     // Thermal limit check (e.g., standard lithium limit is ~55C, let's play it safe at 45C)
-    if (sysMaxTemp >= 45.0) {
-      // Serial.println("ACTION: THERMAL ALARM! Engaging Grid to remove load from batteries.");
+    if (sysMetrics.peakTemp >= 45.0) {
+      Serial.println("ACTION: THERMAL ALARM! Engaging Grid to remove load from batteries.");
       // digitalWrite(CONTACTOR_PIN, LOW);
     }
     // High SoC, healthy voltage, balanced, and cool -> Switch to Solar/Battery
-    else if (avgSoc > 80 && minVoltage > 25.5 && voltageDelta < 0.5) {
-      // Serial.println("ACTION: Disengaging Grid (Switching to Solar/Battery)");
+    else if (sysMetrics.avgSoc > 80 && sysMetrics.minVoltage > 25.5 && sysMetrics.voltageDelta < 0.5) {
+      Serial.println("ACTION: Disengaging Grid (Switching to Solar/Battery)");
       // digitalWrite(CONTACTOR_PIN, HIGH);
     }
     // Low SoC, sagging voltage, or large imbalance -> Return to Grid
-    else if (avgSoc < 30 || minVoltage <= 24.0 || voltageDelta >= 1.0) {
-      // Serial.println("ACTION: Engaging Grid (Failsafe/Charging Mode)");
+    else if (sysMetrics.avgSoc < 30 || sysMetrics.minVoltage <= 24.0 || sysMetrics.voltageDelta >= 1.0) {
+      Serial.println("ACTION: Engaging Grid (Failsafe/Charging Mode)");
       // digitalWrite(CONTACTOR_PIN, LOW);
     }
 
