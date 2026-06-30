@@ -1,5 +1,6 @@
 #include "Config.h"
 #include "BleCore.h"
+#include "AcSensorCore.h"
 #include "DisplayDriver.h"
 
 // --- State Machine Enums ---
@@ -20,16 +21,21 @@ SystemMetrics sysMetrics;
 
 AppState currentState = STATE_CONNECT_BMS1;
 unsigned long stateTimer = 0;
+unsigned long lastAcRead = 0;
 
 void setup() {
   Serial.begin(115200);
+  setupAcSensors();
   setupBLE();
   setupDisplay();
   Serial.println("\n--- System Setup Complete. Waiting for initial interval... ---");
 }
 
 void loop() {
-  // readAcSensors(); // Free-running loop for AC sensors (coming soon)
+  if (millis() - lastAcRead >= 500) {
+    readAcSensors();
+    lastAcRead = millis();
+  }
 
   switch (currentState) {
 
@@ -142,17 +148,19 @@ void evaluateContactorLogic() {
     sysMetrics.netCurrent = bms1Data.current + bms2Data.current;
     sysMetrics.netPower = bms1Data.power + bms2Data.power;
 
-    // 2. Set Status Enum
+    sysMetrics.acVoltage = acVoltage; // Extracted from AcSensorCore
+    sysMetrics.acCurrent = acCurrent; 
+    sysMetrics.acPower = acVoltage * acCurrent; // Apparent power (VA)
+
+    // Set Status
     if (sysMetrics.netCurrent > 1.0) sysMetrics.status = STATUS_CHARGING;
     else if (sysMetrics.netCurrent < -1.0) sysMetrics.status = STATUS_DISCHARGING;
     else sysMetrics.status = STATUS_IDLE;
 
-    // --- Print Telemetry ---
-    Serial.print("System Status : "); Serial.println(statusToString(sysMetrics.status));
-    Serial.print("Net Flow      : "); Serial.print(sysMetrics.netCurrent); Serial.print(" A ("); Serial.print(sysMetrics.netPower); Serial.println(" W)");
-    Serial.print("Average SoC   : "); Serial.print(sysMetrics.avgSoc); Serial.print("% (Imbalance: "); Serial.print(sysMetrics.socDelta); Serial.println("%)");
-    Serial.print("Min Voltage   : "); Serial.print(sysMetrics.minVoltage); Serial.print(" V (Delta: "); Serial.print(sysMetrics.voltageDelta); Serial.println(" V)");
-    Serial.print("Peak Temp     : "); Serial.print(sysMetrics.peakTemp); Serial.println(" C");
+    // Print with AC Data
+    Serial.printf("\nStatus: %s | DC Net: %.2fA (%.0fW)\n", statusToString(sysMetrics.status), sysMetrics.netCurrent, sysMetrics.netPower);
+    Serial.printf("AC Flow: %.2fA (%.0fVA) @ %.1fV\n", sysMetrics.acCurrent, sysMetrics.acPower, sysMetrics.acVoltage);
+    Serial.printf("SoC: %d%% | Temp: %.1fC\n", sysMetrics.avgSoc, sysMetrics.peakTemp);
 
     // --- Advanced Switch Logic ---
     // Thermal limit check (e.g., standard lithium limit is ~55C, let's play it safe at 45C)

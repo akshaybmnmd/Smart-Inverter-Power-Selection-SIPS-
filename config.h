@@ -50,6 +50,11 @@ struct SystemMetrics {
   float voltageDelta;
   float peakTemp;
   SystemStatus status;
+  
+  // --- NEW AC METRICS ---
+  float acVoltage;
+  float acCurrent;
+  float acPower;
 };
 
 static const char* statusToString(SystemStatus status) {
