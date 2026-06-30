@@ -44,7 +44,9 @@ enum SystemStatus {
 
 struct SystemMetrics {
   float netCurrent;
+  float currentDelta;
   float netPower;
+  float powerDelta;
   int avgSoc;
   int socDelta;
   float minVoltage;
