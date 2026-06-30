@@ -153,11 +153,11 @@ void evaluateContactorLogic() {
     else sysMetrics.status = STATUS_IDLE;
 
     // --- Print Telemetry ---
-    Serial.printf("System Status  : %s\n", sysMetrics.status);
-    Serial.printf("Net Flow       : %.2f A (%.0f Watts)\n", sysMetrics.netCurrent, sysMetrics.netPower);
-    Serial.printf("Average SoC    : %d%% (Imbalance: %d%%)\n", sysMetrics.avgSoc, sysMetrics.socDelta);
-    Serial.printf("Min Voltage    : %.2f V (Delta: %.3f V)\n", sysMetrics.minVoltage, sysMetrics.voltageDelta);
-    Serial.printf("Peak Temp      : %.1f °C\n", sysMetrics.peakTemp);
+    Serial.print("System Status : "); Serial.println(statusToString(sysMetrics.status));
+    Serial.print("Net Flow      : "); Serial.print(sysMetrics.netCurrent); Serial.print(" A ("); Serial.print(sysMetrics.netPower); Serial.println(" W)");
+    Serial.print("Average SoC   : "); Serial.print(sysMetrics.avgSoc); Serial.print("% (Imbalance: "); Serial.print(sysMetrics.socDelta); Serial.println("%)");
+    Serial.print("Min Voltage   : "); Serial.print(sysMetrics.minVoltage); Serial.print(" V (Delta: "); Serial.print(sysMetrics.voltageDelta); Serial.println(" V)");
+    Serial.print("Peak Temp     : "); Serial.print(sysMetrics.peakTemp); Serial.println(" C");
 
     // --- Advanced Switch Logic ---
     // Thermal limit check (e.g., standard lithium limit is ~55C, let's play it safe at 45C)
@@ -182,4 +182,14 @@ void evaluateContactorLogic() {
     // digitalWrite(CONTACTOR_PIN, LOW);
   }
   Serial.println("-------------------------------");
+}
+
+const char* statusToString(SystemStatus status) {
+  switch (status) {
+    case STATUS_IDLE:        return "IDLE";
+    case STATUS_CHARGING:    return "CHARGING";
+    case STATUS_DISCHARGING: return "DISCHARGING";
+    case STATUS_ERROR:       return "ERROR";
+    default:                 return "UNKNOWN";
+  }
 }
