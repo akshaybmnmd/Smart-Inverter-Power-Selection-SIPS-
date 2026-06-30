@@ -19,9 +19,9 @@ unsigned long stateTimer = 0;
 
 void setup() {
   Serial.begin(115200);
-  
+
   setupBLE();
-  
+
   Serial.println("\n--- System Setup Complete. Waiting for initial interval... ---");
 }
 
@@ -29,7 +29,7 @@ void loop() {
   // readAcSensors(); // Free-running loop for AC sensors (coming soon)
 
   switch (currentState) {
-    
+
     case STATE_WAIT_INTERVAL:
       if (millis() - stateTimer >= READ_INTERVAL_MS) {
         Serial.printf("\n[DEBUG %lu] Interval triggered. Moving to BMS 1.\n", millis());
@@ -40,25 +40,25 @@ void loop() {
     case STATE_CONNECT_BMS1:
       activeBms = &bms1Data;
       if (connectAndSubscribe(BMS1_MAC)) {
-        stateTimer = millis(); 
-        currentState = STATE_DELAY_BMS1; 
+        stateTimer = millis();
+        currentState = STATE_DELAY_BMS1;
       } else {
         Serial.printf("[DEBUG %lu] BMS 1 connect failed. Jumping to Cooldown.\n", millis());
         stateTimer = millis();
-        currentState = STATE_COOLDOWN; 
+        currentState = STATE_COOLDOWN;
       }
       break;
 
     case STATE_DELAY_BMS1:
-      if (millis() - stateTimer >= 500) { 
-         if (triggerBmsRead()) {
-            stateTimer = millis(); 
-            currentState = STATE_WAIT_BMS1_DATA;
-         } else {
-            disconnectBLE();
-            stateTimer = millis();
-            currentState = STATE_COOLDOWN;
-         }
+      if (millis() - stateTimer >= 500) {
+        if (triggerBmsRead()) {
+          stateTimer = millis();
+          currentState = STATE_WAIT_BMS1_DATA;
+        } else {
+          disconnectBLE();
+          stateTimer = millis();
+          currentState = STATE_COOLDOWN;
+        }
       }
       break;
 
@@ -87,7 +87,7 @@ void loop() {
     case STATE_CONNECT_BMS2:
       activeBms = &bms2Data;
       if (connectAndSubscribe(BMS2_MAC)) {
-        stateTimer = millis(); 
+        stateTimer = millis();
         currentState = STATE_DELAY_BMS2;
       } else {
         Serial.printf("[DEBUG %lu] BMS 2 connect failed. Jumping to Process Logic.\n", millis());
@@ -96,14 +96,14 @@ void loop() {
       break;
 
     case STATE_DELAY_BMS2:
-      if (millis() - stateTimer >= 500) { 
-         if (triggerBmsRead()) {
-            stateTimer = millis(); 
-            currentState = STATE_WAIT_BMS2_DATA;
-         } else {
-            disconnectBLE();
-            currentState = STATE_PROCESS_LOGIC;
-         }
+      if (millis() - stateTimer >= 500) {
+        if (triggerBmsRead()) {
+          stateTimer = millis();
+          currentState = STATE_WAIT_BMS2_DATA;
+        } else {
+          disconnectBLE();
+          currentState = STATE_PROCESS_LOGIC;
+        }
       }
       break;
 
@@ -123,7 +123,7 @@ void loop() {
     case STATE_PROCESS_LOGIC:
       evaluateContactorLogic();
       activeBms = nullptr;
-      stateTimer = millis(); 
+      stateTimer = millis();
       Serial.printf("[DEBUG %lu] Cycle complete. Waiting %dms for next interval.\n", millis(), READ_INTERVAL_MS);
       currentState = STATE_WAIT_INTERVAL;
       break;
@@ -132,7 +132,7 @@ void loop() {
 
 void evaluateContactorLogic() {
   Serial.println("\n--- Evaluating System State ---");
-  
+
   if (bms1Data.isConnected && bms2Data.isConnected) {
     // 1. Capacity & Health
     int avgSoc = (bms1Data.soc + bms2Data.soc) / 2;
@@ -148,7 +148,7 @@ void evaluateContactorLogic() {
     // 4. Power & Current Flow
     float netCurrent = bms1Data.current + bms2Data.current;
     float netPower = bms1Data.power + bms2Data.power;
-    
+
     // System Status (Positive = Charging, Negative = Discharging)
     const char* systemStatus = "IDLE";
     if (netCurrent > 1.0) {
@@ -163,18 +163,18 @@ void evaluateContactorLogic() {
     Serial.printf("Average SoC    : %d%% (Imbalance: %d%%)\n", avgSoc, socDelta);
     Serial.printf("Min Voltage    : %.2f V (Delta: %.3f V)\n", minVoltage, voltageDelta);
     Serial.printf("Peak Temp      : %.1f °C\n", sysMaxTemp);
-    
+
     // --- Advanced Switch Logic ---
     // Thermal limit check (e.g., standard lithium limit is ~55C, let's play it safe at 45C)
     if (sysMaxTemp >= 45.0) {
-       // Serial.println("ACTION: THERMAL ALARM! Engaging Grid to remove load from batteries.");
-       // digitalWrite(CONTACTOR_PIN, LOW); 
+      // Serial.println("ACTION: THERMAL ALARM! Engaging Grid to remove load from batteries.");
+      // digitalWrite(CONTACTOR_PIN, LOW);
     }
     // High SoC, healthy voltage, balanced, and cool -> Switch to Solar/Battery
     else if (avgSoc > 80 && minVoltage > 25.5 && voltageDelta < 0.5) {
       // Serial.println("ACTION: Disengaging Grid (Switching to Solar/Battery)");
       // digitalWrite(CONTACTOR_PIN, HIGH);
-    } 
+    }
     // Low SoC, sagging voltage, or large imbalance -> Return to Grid
     else if (avgSoc < 30 || minVoltage <= 24.0 || voltageDelta >= 1.0) {
       // Serial.println("ACTION: Engaging Grid (Failsafe/Charging Mode)");
