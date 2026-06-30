@@ -2,13 +2,13 @@
 #include <NimBLEDevice.h>
 
 // Instantiate the exposed variables
-BmsData bms1Data = {1, 0, 0, 0, 0, 0, false, false, {0}, 0};
-BmsData bms2Data = {2, 0, 0, 0, 0, 0, false, false, {0}, 0};
+BmsData bms1Data = { 1, 0, 0, 0, 0, 0, false, false, { 0 }, 0 };
+BmsData bms2Data = { 2, 0, 0, 0, 0, 0, false, false, { 0 }, 0 };
 BmsData* activeBms = nullptr;
 
 // Private variables (only accessible within this file)
 NimBLEClient* pClient = nullptr;
-NimBLERemoteCharacteristic* pActiveWriteChar = nullptr; 
+NimBLERemoteCharacteristic* pActiveWriteChar = nullptr;
 uint8_t basicInfoCmd[] = { 0xDD, 0xA5, 0x03, 0x00, 0xFF, 0xFD, 0x77 };
 
 // --- Notification Callback ---
@@ -28,11 +28,29 @@ static void notifyCB(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t l
       int16_t rawCurrent = (activeBms->buffer[6] << 8) | activeBms->buffer[7];
       activeBms->current = rawCurrent * 0.01;
       activeBms->soc = activeBms->buffer[23];
-      
-      Serial.printf(">>> [BMS %d] V: %.2f, I: %.2f, SoC: %d%% <<<\n", activeBms->id, activeBms->voltage, activeBms->current, activeBms->soc);
-      
+
+      // Calculate Instantaneous Power (Watts)
+      activeBms->power = activeBms->voltage * activeBms->current;
+
+      // Extract Temperatures (Byte 26 = NTC count)
+      uint8_t ntcCount = activeBms->buffer[26];
+      float highestTemp = -100.0;  // Start impossibly low
+
+      // Safety check to ensure we have enough bytes in the buffer for the NTCs
+      if (ntcCount > 0 && activeBms->bufferIdx >= (27 + (ntcCount * 2))) {
+        for (int i = 0; i < ntcCount; i++) {
+          // Read 2 bytes per sensor
+          uint16_t rawTemp = (activeBms->buffer[27 + (i * 2)] << 8) | activeBms->buffer[28 + (i * 2)];
+          // Convert 0.1 Kelvin to Celsius
+          float celsius = (rawTemp / 10.0) - 273.15;
+          if (celsius > highestTemp) highestTemp = celsius;
+        }
+      }
+      activeBms->maxTemp = (highestTemp > -50.0) ? highestTemp : 0.0;  // Fallback if no sensors found
+
+      Serial.printf(">>> [BMS %d] V: %.2f, I: %.2fA, P: %.0fW, SoC: %d%%, Temp: %.1fC <<<\n", activeBms->id, activeBms->voltage, activeBms->current, activeBms->power, activeBms->soc, activeBms->maxTemp);
       activeBms->isConnected = true;
-      activeBms->dataReady = true; 
+      activeBms->dataReady = true;
     } else {
       Serial.printf("[DEBUG %lu] Payload failed header/length validation.\n", millis());
     }
@@ -44,7 +62,7 @@ static void notifyCB(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t l
 // --- Public Functions ---
 void setupBLE() {
   NimBLEDevice::init("");
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9); 
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
   pClient = NimBLEDevice::createClient();
 }
 
@@ -56,39 +74,39 @@ void disconnectBLE() {
 
 bool connectAndSubscribe(const std::string& macAddress) {
   Serial.printf("[DEBUG %lu] === Attempting connection to %s ===\n", millis(), macAddress.c_str());
-  
-  activeBms->dataReady = false; 
+
+  activeBms->dataReady = false;
   activeBms->bufferIdx = 0;
   memset(activeBms->buffer, 0, 64);
-  pActiveWriteChar = nullptr; 
-  
-  NimBLEAddress address(macAddress, BLE_ADDR_PUBLIC); 
-  
+  pActiveWriteChar = nullptr;
+
+  NimBLEAddress address(macAddress, BLE_ADDR_PUBLIC);
+
   if (!pClient->connect(address)) {
     Serial.printf("[ERROR %lu] pClient->connect() failed entirely.\n", millis());
     activeBms->isConnected = false;
     return false;
   }
-  
+
   Serial.printf("[DEBUG %lu] Connected! Fetching service %s...\n", millis(), BMS_SERVICE_UUID);
   NimBLERemoteService* pService = pClient->getService(BMS_SERVICE_UUID);
-  
+
   if (pService != nullptr) {
     Serial.printf("[DEBUG %lu] Service found. Getting characteristics...\n", millis());
     NimBLERemoteCharacteristic* pNotifyChar = pService->getCharacteristic(BMS_CHAR_NOTIFY_UUID);
-    pActiveWriteChar = pService->getCharacteristic(BMS_CHAR_WRITE_UUID); 
-    
+    pActiveWriteChar = pService->getCharacteristic(BMS_CHAR_WRITE_UUID);
+
     if (pNotifyChar != nullptr && pNotifyChar->canNotify()) {
       Serial.printf("[DEBUG %lu] Subscribing to notifications on %s...\n", millis(), BMS_CHAR_NOTIFY_UUID);
       pNotifyChar->subscribe(true, notifyCB);
-      return true; 
+      return true;
     } else {
       Serial.printf("[ERROR %lu] Notify Characteristic %s missing or cannot notify.\n", millis(), BMS_CHAR_NOTIFY_UUID);
     }
   } else {
     Serial.printf("[ERROR %lu] Service %s not found on this device.\n", millis(), BMS_SERVICE_UUID);
   }
-  
+
   activeBms->isConnected = false;
   Serial.printf("[DEBUG %lu] Disconnecting due to service/char failure.\n", millis());
   disconnectBLE();
@@ -98,7 +116,7 @@ bool connectAndSubscribe(const std::string& macAddress) {
 bool triggerBmsRead() {
   if (pActiveWriteChar != nullptr && (pActiveWriteChar->canWrite() || pActiveWriteChar->canWriteNoResponse())) {
     Serial.printf("[DEBUG %lu] Writing 0xDD trigger command to %s...\n", millis(), BMS_CHAR_WRITE_UUID);
-    pActiveWriteChar->writeValue(basicInfoCmd, sizeof(basicInfoCmd), true); 
+    pActiveWriteChar->writeValue(basicInfoCmd, sizeof(basicInfoCmd), true);
     return true;
   }
   Serial.printf("[ERROR %lu] Cannot write to characteristic %s!\n", millis(), BMS_CHAR_WRITE_UUID);
