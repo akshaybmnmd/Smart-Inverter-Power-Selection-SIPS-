@@ -15,14 +15,11 @@ uint8_t basicInfoCmd[] = { 0xDD, 0xA5, 0x03, 0x00, 0xFF, 0xFD, 0x77 };
 static void notifyCB(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify) {
   if (activeBms == nullptr) return;
 
-  Serial.printf("[DEBUG %lu] Notification chunk received: %d bytes\n", millis(), length);
-
   for (size_t i = 0; i < length; i++) {
     if (activeBms->bufferIdx < 64) activeBms->buffer[activeBms->bufferIdx++] = pData[i];
   }
 
   if (pData[length - 1] == 0x77) {
-    Serial.printf("[DEBUG %lu] Footer 0x77 detected. Processing payload...\n", millis());
     if (activeBms->bufferIdx > 23 && activeBms->buffer[0] == 0xDD && activeBms->buffer[1] == 0x03) {
       activeBms->voltage = ((activeBms->buffer[4] << 8) | activeBms->buffer[5]) * 0.01;
       int16_t rawCurrent = (activeBms->buffer[6] << 8) | activeBms->buffer[7];
@@ -73,8 +70,6 @@ void disconnectBLE() {
 }
 
 bool connectAndSubscribe(const std::string& macAddress) {
-  Serial.printf("[DEBUG %lu] === Attempting connection to %s ===\n", millis(), macAddress.c_str());
-
   activeBms->dataReady = false;
   activeBms->bufferIdx = 0;
   memset(activeBms->buffer, 0, 64);
@@ -88,16 +83,13 @@ bool connectAndSubscribe(const std::string& macAddress) {
     return false;
   }
 
-  Serial.printf("[DEBUG %lu] Connected! Fetching service %s...\n", millis(), BMS_SERVICE_UUID);
   NimBLERemoteService* pService = pClient->getService(BMS_SERVICE_UUID);
 
   if (pService != nullptr) {
-    Serial.printf("[DEBUG %lu] Service found. Getting characteristics...\n", millis());
     NimBLERemoteCharacteristic* pNotifyChar = pService->getCharacteristic(BMS_CHAR_NOTIFY_UUID);
     pActiveWriteChar = pService->getCharacteristic(BMS_CHAR_WRITE_UUID);
 
     if (pNotifyChar != nullptr && pNotifyChar->canNotify()) {
-      Serial.printf("[DEBUG %lu] Subscribing to notifications on %s...\n", millis(), BMS_CHAR_NOTIFY_UUID);
       pNotifyChar->subscribe(true, notifyCB);
       return true;
     } else {
@@ -115,7 +107,6 @@ bool connectAndSubscribe(const std::string& macAddress) {
 
 bool triggerBmsRead() {
   if (pActiveWriteChar != nullptr && (pActiveWriteChar->canWrite() || pActiveWriteChar->canWriteNoResponse())) {
-    Serial.printf("[DEBUG %lu] Writing 0xDD trigger command to %s...\n", millis(), BMS_CHAR_WRITE_UUID);
     pActiveWriteChar->writeValue(basicInfoCmd, sizeof(basicInfoCmd), true);
     return true;
   }

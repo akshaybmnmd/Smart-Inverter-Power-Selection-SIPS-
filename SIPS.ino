@@ -35,7 +35,6 @@ void loop() {
 
     case STATE_WAIT_INTERVAL:
       if (millis() - stateTimer >= READ_INTERVAL_MS) {
-        Serial.printf("\n[DEBUG %lu] Interval triggered. Moving to BMS 1.\n", millis());
         currentState = STATE_CONNECT_BMS1;
       }
       break;
@@ -67,7 +66,6 @@ void loop() {
 
     case STATE_WAIT_BMS1_DATA:
       if (activeBms->dataReady) {
-        Serial.printf("[DEBUG %lu] BMS 1 Data complete. Disconnecting...\n", millis());
         disconnectBLE();
         stateTimer = millis();
         currentState = STATE_COOLDOWN;
@@ -82,7 +80,6 @@ void loop() {
 
     case STATE_COOLDOWN:
       if (millis() - stateTimer >= COOLDOWN_MS) {
-        Serial.printf("[DEBUG %lu] Radio cooldown complete. Moving to BMS 2.\n", millis());
         currentState = STATE_CONNECT_BMS2;
       }
       break;
@@ -112,7 +109,6 @@ void loop() {
 
     case STATE_WAIT_BMS2_DATA:
       if (activeBms->dataReady) {
-        Serial.printf("[DEBUG %lu] BMS 2 Data complete. Disconnecting...\n", millis());
         disconnectBLE();
         currentState = STATE_PROCESS_LOGIC;
       } else if (millis() - stateTimer >= TIMEOUT_MS) {
@@ -128,7 +124,6 @@ void loop() {
       updateDisplay(sysMetrics);
       activeBms = nullptr;
       stateTimer = millis();
-      Serial.printf("[DEBUG %lu] Cycle complete. Waiting %dms for next interval.\n", millis(), READ_INTERVAL_MS);
       currentState = STATE_WAIT_INTERVAL;
       break;
   }
