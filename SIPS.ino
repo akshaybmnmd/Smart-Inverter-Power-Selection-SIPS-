@@ -134,43 +134,48 @@ void evaluateContactorLogic() {
   Serial.println("\n--- Evaluating System State ---");
   
   if (bms1Data.isConnected && bms2Data.isConnected) {
-    // 1. Capacity Metrics
+    // 1. Capacity & Health
     int avgSoc = (bms1Data.soc + bms2Data.soc) / 2;
     int socDelta = abs(bms1Data.soc - bms2Data.soc);
 
     // 2. Voltage Metrics
     float minVoltage = min(bms1Data.voltage, bms2Data.voltage);
-    float maxVoltage = max(bms1Data.voltage, bms2Data.voltage);
     float voltageDelta = abs(bms1Data.voltage - bms2Data.voltage);
 
-    // 3. Current & Power Flow
-    // In parallel, the net current to/from the inverter is the sum of both BMS currents.
-    float totalCurrent = bms1Data.current + bms2Data.current;
+    // 3. Thermal Metrics
+    float sysMaxTemp = max(bms1Data.maxTemp, bms2Data.maxTemp);
+
+    // 4. Power & Current Flow
+    float netCurrent = bms1Data.current + bms2Data.current;
+    float netPower = bms1Data.power + bms2Data.power;
     
-    // 4. System Status (Idle, Charging, Discharging)
-    // Note: Standard JBD protocol usually reports discharge as positive and charge as negative. 
-    // We use a 1.0A deadband to prevent fluctuating noise from showing as active charging/discharging.
+    // System Status (Positive = Charging, Negative = Discharging)
     const char* systemStatus = "IDLE";
-    if (totalCurrent > 1.0) {
+    if (netCurrent > 1.0) {
+      systemStatus = "CHARGING (Solar Active)";
+    } else if (netCurrent < -1.0) {
       systemStatus = "DISCHARGING (Running on Battery)";
-    } else if (totalCurrent < -1.0) {
-      systemStatus = "CHARGING (Solar is Charging)";
     }
 
     // --- Print Telemetry ---
     Serial.printf("System Status  : %s\n", systemStatus);
-    Serial.printf("Net Current    : %.2f A\n", totalCurrent);
+    Serial.printf("Net Flow       : %.2f A (%.0f Watts)\n", netCurrent, netPower);
     Serial.printf("Average SoC    : %d%% (Imbalance: %d%%)\n", avgSoc, socDelta);
-    Serial.printf("Pack Voltages  : Min %.2f V | Max %.2f V\n", minVoltage, maxVoltage);
-    Serial.printf("Voltage Delta  : %.3f V\n", voltageDelta);
+    Serial.printf("Min Voltage    : %.2f V (Delta: %.3f V)\n", minVoltage, voltageDelta);
+    Serial.printf("Peak Temp      : %.1f °C\n", sysMaxTemp);
     
-    // --- Skeleton Switch Logic ---
-    // Example: Drop grid and use battery if SoC is high, voltage is healthy, and packs are balanced
-    if (avgSoc > 80 && minVoltage > 25.5 && voltageDelta < 0.5) {
+    // --- Advanced Switch Logic ---
+    // Thermal limit check (e.g., standard lithium limit is ~55C, let's play it safe at 45C)
+    if (sysMaxTemp >= 45.0) {
+       // Serial.println("ACTION: THERMAL ALARM! Engaging Grid to remove load from batteries.");
+       // digitalWrite(CONTACTOR_PIN, LOW); 
+    }
+    // High SoC, healthy voltage, balanced, and cool -> Switch to Solar/Battery
+    else if (avgSoc > 80 && minVoltage > 25.5 && voltageDelta < 0.5) {
       // Serial.println("ACTION: Disengaging Grid (Switching to Solar/Battery)");
       // digitalWrite(CONTACTOR_PIN, HIGH);
     } 
-    // Example: Reconnect grid if battery is low, a cell group sags, or packs become dangerously unbalanced
+    // Low SoC, sagging voltage, or large imbalance -> Return to Grid
     else if (avgSoc < 30 || minVoltage <= 24.0 || voltageDelta >= 1.0) {
       // Serial.println("ACTION: Engaging Grid (Failsafe/Charging Mode)");
       // digitalWrite(CONTACTOR_PIN, LOW);
