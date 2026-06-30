@@ -18,7 +18,7 @@ enum AppState {
 // Instantiate global metrics object
 SystemMetrics sysMetrics;
 
-AppState currentState = STATE_WAIT_INTERVAL;
+AppState currentState = STATE_CONNECT_BMS1;
 unsigned long stateTimer = 0;
 
 void setup() {
