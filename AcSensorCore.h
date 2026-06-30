@@ -5,7 +5,7 @@
 #include "Config.h"
 
 void setupAcSensors();
-void readAcSensors(); // Call this in the main loop
+void readAcSensors();  // Call this in the main loop
 
 extern float acVoltage;
 extern float acCurrent;

@@ -50,7 +50,7 @@ struct SystemMetrics {
   float voltageDelta;
   float peakTemp;
   SystemStatus status;
-  
+
   // --- NEW AC METRICS ---
   float acVoltage;
   float acCurrent;
@@ -59,10 +59,10 @@ struct SystemMetrics {
 
 static const char* statusToString(SystemStatus status) {
   switch (status) {
-    case STATUS_IDLE:        return "IDLE";
-    case STATUS_CHARGING:    return "CHARGING";
+    case STATUS_IDLE: return "IDLE";
+    case STATUS_CHARGING: return "CHARGING";
     case STATUS_DISCHARGING: return "DISCHARGING";
-    default:                 return "ERROR";
+    default: return "ERROR";
   }
 }
 
