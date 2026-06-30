@@ -1,5 +1,6 @@
 #include "Config.h"
 #include "BleCore.h"
+#include "DisplayDriver.h"
 
 // --- State Machine Enums ---
 enum AppState {
@@ -22,9 +23,8 @@ unsigned long stateTimer = 0;
 
 void setup() {
   Serial.begin(115200);
-
   setupBLE();
-
+  setupDisplay();
   Serial.println("\n--- System Setup Complete. Waiting for initial interval... ---");
 }
 
@@ -125,6 +125,7 @@ void loop() {
 
     case STATE_PROCESS_LOGIC:
       evaluateContactorLogic();
+      updateDisplay(sysMetrics);
       activeBms = nullptr;
       stateTimer = millis();
       Serial.printf("[DEBUG %lu] Cycle complete. Waiting %dms for next interval.\n", millis(), READ_INTERVAL_MS);
