@@ -45,7 +45,6 @@ static void notifyCB(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t l
       }
       activeBms->maxTemp = (highestTemp > -50.0) ? highestTemp : 0.0;  // Fallback if no sensors found
 
-      Serial.printf(">>> [BMS %d] V: %.2f, I: %.2fA, P: %.0fW, SoC: %d%%, Temp: %.1fC <<<\n", activeBms->id, activeBms->voltage, activeBms->current, activeBms->power, activeBms->soc, activeBms->maxTemp);
       activeBms->isConnected = true;
       activeBms->dataReady = true;
       activeBms->lastUpdateTime = millis();
