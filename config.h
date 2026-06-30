@@ -52,4 +52,13 @@ struct SystemMetrics {
   SystemStatus status;
 };
 
+static const char* statusToString(SystemStatus status) {
+  switch (status) {
+    case STATUS_IDLE:        return "IDLE";
+    case STATUS_CHARGING:    return "CHARGING";
+    case STATUS_DISCHARGING: return "DISCHARGING";
+    default:                 return "ERROR";
+  }
+}
+
 #endif
