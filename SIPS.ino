@@ -1,6 +1,6 @@
 #include "Config.h"
 #include "BleCore.h"
-#include "WifiCore.h"
+// #include "WifiCore.h"
 #include "DisplayDriver.h"
 
 // --- State Machine Enums ---
@@ -24,14 +24,14 @@ unsigned long stateTimer = 0;
 
 void setup() {
   Serial.begin(115200);
-  setupWifiAndOTA();
+  // setupWifiAndOTA();
   setupBLE();
   setupDisplay();
   Serial.println("\n--- System Setup Complete. Waiting for initial interval... ---");
 }
 
 void loop() {
-  handleWifiAndOTA();
+  // handleWifiAndOTA();
   // readAcSensors(); // Free-running loop for AC sensors (coming soon)
 
   switch (currentState) {
