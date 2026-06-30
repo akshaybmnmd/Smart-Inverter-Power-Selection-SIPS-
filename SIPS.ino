@@ -137,52 +137,57 @@ void loop() {
 
 void evaluateContactorLogic() {
   Serial.println("\n--- Evaluating System State ---");
+  
+  // Define our fault-tolerance window (5 Minutes)
+  const unsigned long STALE_TIMEOUT_MS = 5 * 60 * 1000; 
+  unsigned long currentMillis = millis();
+  
+  // Check if data exists AND is newer than 5 minutes
+  bool bms1Valid = (bms1Data.lastUpdateTime > 0) && (currentMillis - bms1Data.lastUpdateTime < STALE_TIMEOUT_MS);
+  bool bms2Valid = (bms2Data.lastUpdateTime > 0) && (currentMillis - bms2Data.lastUpdateTime < STALE_TIMEOUT_MS);
 
-  if (bms1Data.isConnected && bms2Data.isConnected) {
-    // 1. Calculations
+  if (bms1Valid && bms2Valid) {
+    
+    // --- GRACE PERIOD WARNING ---
+    // If we are disconnected, but still within the 5-minute window, print a warning.
+    if (!bms1Data.isConnected || !bms2Data.isConnected) {
+      Serial.println("[WARNING] BLE connection lost. Operating on cached BMS data (Grace Period).");
+    }
+
+    // 1. Calculations (Using the last known good data)
     sysMetrics.avgSoc = (bms1Data.soc + bms2Data.soc) / 2;
     sysMetrics.socDelta = abs(bms1Data.soc - bms2Data.soc);
-    sysMetrics.minVoltage = min(bms1Data.voltage, bms2Data.voltage);
+    sysMetrics.minVoltage = (bms1Data.voltage < bms2Data.voltage) ? bms1Data.voltage : bms2Data.voltage;
     sysMetrics.voltageDelta = abs(bms1Data.voltage - bms2Data.voltage);
-    sysMetrics.peakTemp = max(bms1Data.maxTemp, bms2Data.maxTemp);
+    sysMetrics.peakTemp = (bms1Data.maxTemp > bms2Data.maxTemp) ? bms1Data.maxTemp : bms2Data.maxTemp;
+    
     sysMetrics.netCurrent = bms1Data.current + bms2Data.current;
     sysMetrics.netPower = bms1Data.power + bms2Data.power;
-
-    sysMetrics.acVoltage = acVoltage; // Extracted from AcSensorCore
+    
+    // Incorporate AC calculations
+    sysMetrics.acVoltage = acVoltage; 
     sysMetrics.acCurrent = acCurrent; 
-    sysMetrics.acPower = acVoltage * acCurrent; // Apparent power (VA)
+    sysMetrics.acPower = acVoltage * acCurrent; 
 
-    // Set Status
+    // 2. Set Status
     if (sysMetrics.netCurrent > 1.0) sysMetrics.status = STATUS_CHARGING;
     else if (sysMetrics.netCurrent < -1.0) sysMetrics.status = STATUS_DISCHARGING;
     else sysMetrics.status = STATUS_IDLE;
 
-    // Print with AC Data
-    Serial.printf("\nStatus: %s | DC Net: %.2fA (%.0fW)\n", statusToString(sysMetrics.status), sysMetrics.netCurrent, sysMetrics.netPower);
+    // 3. Print
+    Serial.printf("Status: %s | DC Net: %.2fA (%.0fW)\n", statusToString(sysMetrics.status), sysMetrics.netCurrent, sysMetrics.netPower);
     Serial.printf("AC Flow: %.2fA (%.0fVA) @ %.1fV\n", sysMetrics.acCurrent, sysMetrics.acPower, sysMetrics.acVoltage);
     Serial.printf("SoC: %d%% | Temp: %.1fC\n", sysMetrics.avgSoc, sysMetrics.peakTemp);
-
-    // --- Advanced Switch Logic ---
-    // Thermal limit check (e.g., standard lithium limit is ~55C, let's play it safe at 45C)
-    if (sysMetrics.peakTemp >= 45.0) {
-      Serial.println("ACTION: THERMAL ALARM! Engaging Grid to remove load from batteries.");
-      // digitalWrite(CONTACTOR_PIN, LOW);
-    }
-    // High SoC, healthy voltage, balanced, and cool -> Switch to Solar/Battery
-    else if (sysMetrics.avgSoc > 80 && sysMetrics.minVoltage > 25.5 && sysMetrics.voltageDelta < 0.5) {
-      Serial.println("ACTION: Disengaging Grid (Switching to Solar/Battery)");
-      // digitalWrite(CONTACTOR_PIN, HIGH);
-    }
-    // Low SoC, sagging voltage, or large imbalance -> Return to Grid
-    else if (sysMetrics.avgSoc < 30 || sysMetrics.minVoltage <= 24.0 || sysMetrics.voltageDelta >= 1.0) {
-      Serial.println("ACTION: Engaging Grid (Failsafe/Charging Mode)");
-      // digitalWrite(CONTACTOR_PIN, LOW);
-    }
+    
+    // -> Contactor switching logic goes here safely <-
 
   } else {
-    Serial.println("WARNING: BMS Data Missing. Defaulting to safe state.");
-    // Force grid connection as a failsafe
-    // digitalWrite(CONTACTOR_PIN, LOW);
+    // 5 minutes have passed with no data. This is a HARD FAULT.
+    sysMetrics.status = STATUS_ERROR;
+    Serial.println("[CRITICAL ERROR] BMS Data Timeout (5+ min). Defaulting to safe state.");
+    
+    // FORCE GRID CONNECTION
+    // digitalWrite(CONTACTOR_PIN, LOW); 
   }
   Serial.println("-------------------------------");
 }

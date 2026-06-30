@@ -48,6 +48,7 @@ static void notifyCB(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t l
       Serial.printf(">>> [BMS %d] V: %.2f, I: %.2fA, P: %.0fW, SoC: %d%%, Temp: %.1fC <<<\n", activeBms->id, activeBms->voltage, activeBms->current, activeBms->power, activeBms->soc, activeBms->maxTemp);
       activeBms->isConnected = true;
       activeBms->dataReady = true;
+      activeBms->lastUpdateTime = millis();
     } else {
       Serial.printf("[DEBUG %lu] Payload failed header/length validation.\n", millis());
     }

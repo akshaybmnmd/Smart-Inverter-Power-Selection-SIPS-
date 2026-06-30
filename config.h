@@ -24,14 +24,15 @@ struct BmsData {
   float voltage;
   float current;
   float lastCurrent;
-  float power;    // NEW: Real-time Watts
-  float maxTemp;  // NEW: Hottest temperature sensor (Celsius)
+  float power;
+  float maxTemp;
   int soc;
   int lastSoC;
   bool isConnected;
   bool dataReady;
   uint8_t buffer[64];
   size_t bufferIdx;
+  unsigned long lastUpdateTime; // NEW: Tracks data freshness
 };
 
 enum SystemStatus {

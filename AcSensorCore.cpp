@@ -41,8 +41,6 @@ void readAcSensors() {
     // Try to reconnect once every 10 seconds
     if (millis() - lastAdsRetry > 10000) {
       lastAdsRetry = millis();
-      Serial.println("[INFO] Attempting to reconnect to ADS1115...");
-
       if (ads.begin()) {
         Serial.println("[INFO] ADS1115 Reconnected Successfully!");
         adsConnected = true;
