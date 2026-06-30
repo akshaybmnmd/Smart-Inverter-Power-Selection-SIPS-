@@ -17,7 +17,7 @@ void updateDisplay(const SystemMetrics& metrics) {
   
   // Power & Status
   char line1[32];
-  sprintf(line1, "P: %.0f W | %s", metrics.netPower, (metrics.status == 2 ? "DISCH" : "CHG"));
+  sprintf(line1, "P: %.0f W | %s", metrics.netPower, statusToString(metrics.status));
   u8g2.drawStr(0, 25, line1);
   
   // SoC
