@@ -136,25 +136,20 @@ void loop() {
 }
 
 void evaluateContactorLogic() {
-  Serial.println("\n--- Evaluating System State ---");
-  
   // Define our fault-tolerance window (5 Minutes)
   const unsigned long STALE_TIMEOUT_MS = 5 * 60 * 1000; 
   unsigned long currentMillis = millis();
   
-  // Check if data exists AND is newer than 5 minutes
   bool bms1Valid = (bms1Data.lastUpdateTime > 0) && (currentMillis - bms1Data.lastUpdateTime < STALE_TIMEOUT_MS);
   bool bms2Valid = (bms2Data.lastUpdateTime > 0) && (currentMillis - bms2Data.lastUpdateTime < STALE_TIMEOUT_MS);
 
   if (bms1Valid && bms2Valid) {
     
-    // --- GRACE PERIOD WARNING ---
-    // If we are disconnected, but still within the 5-minute window, print a warning.
     if (!bms1Data.isConnected || !bms2Data.isConnected) {
-      Serial.println("[WARNING] BLE connection lost. Operating on cached BMS data (Grace Period).");
+      Serial.println("\n[WARNING] BLE connection lost. Operating on cached BMS data (Grace Period).");
     }
 
-    // 1. Calculations (Using the last known good data)
+    // 1. Calculations
     sysMetrics.avgSoc = (bms1Data.soc + bms2Data.soc) / 2;
     sysMetrics.socDelta = abs(bms1Data.soc - bms2Data.soc);
     sysMetrics.minVoltage = (bms1Data.voltage < bms2Data.voltage) ? bms1Data.voltage : bms2Data.voltage;
@@ -164,7 +159,6 @@ void evaluateContactorLogic() {
     sysMetrics.netCurrent = bms1Data.current + bms2Data.current;
     sysMetrics.netPower = bms1Data.power + bms2Data.power;
     
-    // Incorporate AC calculations
     sysMetrics.acVoltage = acVoltage; 
     sysMetrics.acCurrent = acCurrent; 
     sysMetrics.acPower = acVoltage * acCurrent; 
@@ -174,20 +168,21 @@ void evaluateContactorLogic() {
     else if (sysMetrics.netCurrent < -1.0) sysMetrics.status = STATUS_DISCHARGING;
     else sysMetrics.status = STATUS_IDLE;
 
-    // 3. Print
-    Serial.printf("Status: %s | DC Net: %.2fA (%.0fW)\n", statusToString(sysMetrics.status), sysMetrics.netCurrent, sysMetrics.netPower);
-    Serial.printf("AC Flow: %.2fA (%.0fVA) @ %.1fV\n", sysMetrics.acCurrent, sysMetrics.acPower, sysMetrics.acVoltage);
-    Serial.printf("SoC: %d%% | Temp: %.1fC\n", sysMetrics.avgSoc, sysMetrics.peakTemp);
-    
-    // -> Contactor switching logic goes here safely <-
+    // 3. --- COMPREHENSIVE DASHBOARD PRINT ---
+    Serial.println("\n================ SYSTEM METRICS ================");
+    Serial.printf("STATUS   : %s\n", statusToString(sysMetrics.status));
+    Serial.println("------------------------------------------------");
+    Serial.printf("BMS 1    : %.2fV | %6.2fA | %5.0fW | %3d%% | %.1fC\n", bms1Data.voltage, bms1Data.current, bms1Data.power, bms1Data.soc, bms1Data.maxTemp);
+    Serial.printf("BMS 2    : %.2fV | %6.2fA | %5.0fW | %3d%% | %.1fC\n", bms2Data.voltage, bms2Data.current, bms2Data.power, bms2Data.soc, bms2Data.maxTemp);
+    Serial.println("------------------------------------------------");
+    Serial.printf("DC TOTAL : Min %.2fV (D:%.3fV) | %6.2fA | %5.0fW\n", sysMetrics.minVoltage, sysMetrics.voltageDelta, sysMetrics.netCurrent, sysMetrics.netPower);
+    Serial.printf("AC SENSE : %.1fV | %.2fA | %.0f VA\n", sysMetrics.acVoltage, sysMetrics.acCurrent, sysMetrics.acPower);
+    Serial.printf("HEALTH   : Avg SoC %d%% (Imb %d%%) | Peak Temp %.1fC\n", sysMetrics.avgSoc, sysMetrics.socDelta, sysMetrics.peakTemp);
+    Serial.println("================================================\n");
 
   } else {
-    // 5 minutes have passed with no data. This is a HARD FAULT.
     sysMetrics.status = STATUS_ERROR;
-    Serial.println("[CRITICAL ERROR] BMS Data Timeout (5+ min). Defaulting to safe state.");
-    
-    // FORCE GRID CONNECTION
+    Serial.println("\n[CRITICAL ERROR] BMS Data Timeout (5+ min). Defaulting to safe state.");
     // digitalWrite(CONTACTOR_PIN, LOW); 
   }
-  Serial.println("-------------------------------");
 }
