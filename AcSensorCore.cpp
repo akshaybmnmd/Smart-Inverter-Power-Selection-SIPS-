@@ -1,23 +1,18 @@
 #include "AcSensorCore.h"
-#include <Wire.h>  // Required for the I2C Ping
+#include <Wire.h>
 
 Adafruit_ADS1115 ads;
 float acVoltage = 0.0;
 float acCurrent = 0.0;
 bool adsConnected = false;
 
-// Timer to prevent spamming the I2C bus if the sensor is dead
 unsigned long lastAdsRetry = 0;
 
-// Adjust these based on your multimeter readings
 float calibrationFactorV = 1.0;
 float calibrationFactorI = 1.0;
 
-// --- Helper: Safely Ping the I2C Address ---
 bool pingI2C(uint8_t address) {
   Wire.beginTransmission(address);
-  // 0 means success (device acknowledged).
-  // Any other number means the device is missing/dead.
   return (Wire.endTransmission() == 0);
 }
 
@@ -36,33 +31,28 @@ void setupAcSensors() {
 
 void readAcSensors() {
 
-  // 1. RECONNECTION LOGIC
   if (!adsConnected) {
-    // Try to reconnect once every 10 seconds
     if (millis() - lastAdsRetry > 10000) {
       lastAdsRetry = millis();
       if (ads.begin()) {
         Serial.println("[INFO] ADS1115 Reconnected Successfully!");
         adsConnected = true;
       } else {
-        return;  // Still dead, exit early
+        return;
       }
     } else {
-      return;  // Waiting for 10-second timer
+      return;
     }
   }
 
-  // 2. RUNTIME DISCONNECT CHECK
-  // Ping the default ADS1115 address (0x48) before we commit to reading
   if (!pingI2C(0x48)) {
     Serial.println("[ERROR] ADS1115 connection lost during runtime!");
-    adsConnected = false;  // Mark as disconnected
-    acVoltage = 0.0;       // Zero out values for safety
+    adsConnected = false;
+    acVoltage = 0.0;
     acCurrent = 0.0;
-    return;  // Abort the read
+    return;
   }
 
-  // 3. NORMAL READING LOGIC (Safe to proceed)
   long sumSqV = 0;
   long sumSqI = 0;
   int count = 0;

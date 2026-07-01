@@ -1,17 +1,14 @@
 #include "BleCore.h"
 #include <NimBLEDevice.h>
 
-// Instantiate the exposed variables
 BmsData bms1Data = { 1, 0, 0, 0, 0, 0, false, false, { 0 }, 0 };
 BmsData bms2Data = { 2, 0, 0, 0, 0, 0, false, false, { 0 }, 0 };
 BmsData* activeBms = nullptr;
 
-// Private variables (only accessible within this file)
 NimBLEClient* pClient = nullptr;
 NimBLERemoteCharacteristic* pActiveWriteChar = nullptr;
 uint8_t basicInfoCmd[] = { 0xDD, 0xA5, 0x03, 0x00, 0xFF, 0xFD, 0x77 };
 
-// --- Notification Callback ---
 static void notifyCB(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify) {
   if (activeBms == nullptr) return;
 
@@ -25,20 +22,14 @@ static void notifyCB(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t l
       int16_t rawCurrent = (activeBms->buffer[6] << 8) | activeBms->buffer[7];
       activeBms->current = rawCurrent * 0.01;
       activeBms->soc = activeBms->buffer[23];
-
-      // Calculate Instantaneous Power (Watts)
       activeBms->power = activeBms->voltage * activeBms->current;
 
-      // Extract Temperatures (Byte 26 = NTC count)
       uint8_t ntcCount = activeBms->buffer[26];
-      float highestTemp = -100.0;  // Start impossibly low
+      float highestTemp = -100.0;
 
-      // Safety check to ensure we have enough bytes in the buffer for the NTCs
       if (ntcCount > 0 && activeBms->bufferIdx >= (27 + (ntcCount * 2))) {
         for (int i = 0; i < ntcCount; i++) {
-          // Read 2 bytes per sensor
           uint16_t rawTemp = (activeBms->buffer[27 + (i * 2)] << 8) | activeBms->buffer[28 + (i * 2)];
-          // Convert 0.1 Kelvin to Celsius
           float celsius = (rawTemp / 10.0) - 273.15;
           if (celsius > highestTemp) highestTemp = celsius;
         }
@@ -57,7 +48,6 @@ static void notifyCB(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t l
   }
 }
 
-// --- Public Functions ---
 void setupBLE() {
   NimBLEDevice::init("");
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
