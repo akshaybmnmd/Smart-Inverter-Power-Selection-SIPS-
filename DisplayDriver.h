@@ -5,6 +5,6 @@
 #include "Config.h"
 
 void setupDisplay();
-void updateDisplay(const SystemMetrics& metrics);
+void updateDisplay(const SystemMetrics& metrics, int currentView); 
 
 #endif

@@ -23,8 +23,23 @@ AppState currentState = STATE_CONNECT_BMS1;
 unsigned long stateTimer = 0;
 unsigned long lastAcRead = 0;
 
+// --- Configuration ---
+const int BUTTON_PIN = 15;  // Your chosen GPIO pin
+const int MAX_VIEWS = 4;    // Based on our 4 views discussed
+
+// --- State Variables ---
+int currentView = 0;
+unsigned long lastViewChange = 0;
+const unsigned long VIEW_INTERVAL = 10000;  // 10 seconds in milliseconds
+
+// --- Button Tracking ---
+bool lastButtonState = HIGH;  // Starts HIGH because of INPUT_PULLUP
+unsigned long lastDebounceTime = 0;
+const unsigned long DEBOUNCE_DELAY = 50;  // 50ms to ignore physical button bounce
+
 void setup() {
   Serial.begin(115200);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
   setupAcSensors();
   setupBLE();
   setupDisplay();
@@ -32,9 +47,36 @@ void setup() {
 }
 
 void loop() {
-  if (millis() - lastAcRead >= 500) {
-    readAcSensors();
-    lastAcRead = millis();
+  bool advanceView = false;
+  unsigned long currentMillis = millis();
+
+  // 1. 10-Second Auto-Rotate Timer
+  if (currentMillis - lastViewChange >= VIEW_INTERVAL) {
+    advanceView = true;
+  }
+
+  // 2. Button Press Logic (Debounced)
+  bool reading = digitalRead(BUTTON_PIN);
+  if (reading != lastButtonState) {
+    lastDebounceTime = currentMillis;
+  }
+
+  if ((currentMillis - lastDebounceTime) > DEBOUNCE_DELAY) {
+    static bool buttonProcessed = false;
+    if (reading == LOW && !buttonProcessed) {
+      advanceView = true;
+      buttonProcessed = true;
+    } else if (reading == HIGH) {
+      buttonProcessed = false;
+    }
+  }
+  lastButtonState = reading;
+
+  // 3. EXECUTE STATE CHANGE (Instantly redraws on click or timer)
+  if (advanceView) {
+    currentView = (currentView + 1) % MAX_VIEWS;
+    lastViewChange = currentMillis;
+    updateDisplay(sysMetrics, currentView);  // Force immediate UI refresh
   }
 
   switch (currentState) {
@@ -127,7 +169,7 @@ void loop() {
 
     case STATE_PROCESS_LOGIC:
       evaluateContactorLogic();
-      updateDisplay(sysMetrics);
+      updateDisplay(sysMetrics, currentView);
       activeBms = nullptr;
       stateTimer = millis();
       currentState = STATE_WAIT_INTERVAL;
@@ -137,14 +179,14 @@ void loop() {
 
 void evaluateContactorLogic() {
   // Define our fault-tolerance window (5 Minutes)
-  const unsigned long STALE_TIMEOUT_MS = 5 * 60 * 1000; 
+  const unsigned long STALE_TIMEOUT_MS = 5 * 60 * 1000;
   unsigned long currentMillis = millis();
-  
+
   bool bms1Valid = (bms1Data.lastUpdateTime > 0) && (currentMillis - bms1Data.lastUpdateTime < STALE_TIMEOUT_MS);
   bool bms2Valid = (bms2Data.lastUpdateTime > 0) && (currentMillis - bms2Data.lastUpdateTime < STALE_TIMEOUT_MS);
 
   if (bms1Valid && bms2Valid) {
-    
+
     if (!bms1Data.isConnected || !bms2Data.isConnected) {
       Serial.println("\n[WARNING] BLE connection lost. Operating on cached BMS data (Grace Period).");
     }
@@ -159,10 +201,10 @@ void evaluateContactorLogic() {
     sysMetrics.currentDelta = abs(bms1Data.current - bms2Data.current);
     sysMetrics.netPower = bms1Data.power + bms2Data.power;
     sysMetrics.powerDelta = abs(bms1Data.power - bms2Data.power);
-    
-    sysMetrics.acVoltage = acVoltage; 
-    sysMetrics.acCurrent = acCurrent; 
-    sysMetrics.acPower = acVoltage * acCurrent; 
+
+    sysMetrics.acVoltage = acVoltage;
+    sysMetrics.acCurrent = acCurrent;
+    sysMetrics.acPower = acVoltage * acCurrent;
 
     // 2. Set Status
     if (sysMetrics.netCurrent > 1.0) sysMetrics.status = STATUS_CHARGING;
@@ -185,6 +227,6 @@ void evaluateContactorLogic() {
   } else {
     sysMetrics.status = STATUS_ERROR;
     Serial.println("\n[CRITICAL ERROR] BMS Data Timeout (5+ min). Defaulting to safe state.");
-    // digitalWrite(CONTACTOR_PIN, LOW); 
+    // digitalWrite(CONTACTOR_PIN, LOW);
   }
-  }
+}
