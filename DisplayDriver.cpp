@@ -16,6 +16,19 @@ void setupDisplay() {
   u8g2.setContrast(150);
 }
 
+void drawSplashScreen() {
+  u8g2.clearBuffer();
+  
+  u8g2.setFont(u8g2_font_profont15_tf); 
+  u8g2.drawStr(25, 25, "BMS GATEWAY");
+  
+  u8g2.setFont(u8g2_font_profont11_tf); 
+  u8g2.drawStr(10, 45, "Starting System...");
+  u8g2.drawStr(10, 60, "Initializing BLE...");
+  
+  u8g2.sendBuffer();
+}
+
 void drawOverviewScreen(const SystemMetrics& metrics) {
   char buf[32];
   sprintf(buf, "SYS: %s | AC: %.0fW", shortStatus(metrics.status), metrics.acPower);

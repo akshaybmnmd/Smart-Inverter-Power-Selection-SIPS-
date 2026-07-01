@@ -5,6 +5,7 @@
 #include "Config.h"
 
 void setupDisplay();
+void drawSplashScreen();
 void updateDisplay(const SystemMetrics& metrics, int currentView); 
 
 #endif

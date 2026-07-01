@@ -35,9 +35,10 @@ const unsigned long DEBOUNCE_DELAY = 50;
 void setup() {
   Serial.begin(115200);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+  setupDisplay();
+  drawSplashScreen();
   setupAcSensors();
   setupBLE();
-  setupDisplay();
   Serial.println("\n--- System Setup Complete. Waiting for initial interval... ---");
 }
 
