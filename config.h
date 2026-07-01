@@ -11,9 +11,9 @@ const char* const BMS_SERVICE_UUID = "FF00";
 const char* const BMS_CHAR_NOTIFY_UUID = "FF01";
 const char* const BMS_CHAR_WRITE_UUID = "FF02";
 
-const unsigned long READ_INTERVAL_MS = 30000;
+const unsigned long READ_INTERVAL_MS = 10000;
 const unsigned long TIMEOUT_MS = 2000;
-const unsigned long COOLDOWN_MS = 500;
+const unsigned long COOLDOWN_MS = 200;
 
 struct BmsData {
   uint8_t id;
