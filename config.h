@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 #include <string>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 const std::string BMS1_MAC = "a5:c2:39:1d:e6:2e";
 const std::string BMS2_MAC = "a5:c2:39:1d:e5:9b";

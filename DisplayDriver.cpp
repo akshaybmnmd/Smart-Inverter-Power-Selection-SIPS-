@@ -29,6 +29,35 @@ void drawSplashScreen() {
   u8g2.sendBuffer();
 }
 
+void displayWorker(void * parameter) {
+  unsigned long lastLocalViewChange = millis();
+
+  for(;;) {
+    bool advanceView = false;
+    unsigned long currentMillis = millis();
+
+    if (advanceView) {
+      currentView = (currentView + 1) % MAX_VIEWS;
+      lastLocalViewChange = currentMillis;
+    }
+
+    SystemMetrics localMetricsSnapshot;
+    bool snapshotSuccess = false;
+
+    if (xSemaphoreTake(metricsMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      localMetricsSnapshot = sysMetrics; 
+      xSemaphoreGive(metricsMutex);
+      snapshotSuccess = true;
+    }
+
+    if (snapshotSuccess) {
+      updateDisplay(localMetricsSnapshot, currentView);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(100)); 
+  }
+}
+
 void drawOverviewScreen(const SystemMetrics& metrics) {
   char buf[32];
   sprintf(buf, "SYS: %s | AC: %.0fW", shortStatus(metrics.status), metrics.acPower);

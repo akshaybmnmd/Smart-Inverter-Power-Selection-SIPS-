@@ -3,6 +3,8 @@
 #include "AcSensorCore.h"
 #include "DisplayDriver.h"
 
+TaskHandle_t DisplayTaskHandle = NULL;
+
 enum AppState {
   STATE_WAIT_INTERVAL,
   STATE_CONNECT_BMS1,
@@ -16,6 +18,7 @@ enum AppState {
 };
 
 SystemMetrics sysMetrics;
+SemaphoreHandle_t metricsMutex = NULL;
 
 AppState currentState = STATE_CONNECT_BMS1;
 unsigned long stateTimer = 0;
@@ -35,43 +38,25 @@ const unsigned long DEBOUNCE_DELAY = 50;
 void setup() {
   Serial.begin(115200);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  metricsMutex = xSemaphoreCreateMutex();
+  if (metricsMutex == NULL) {
+    Serial.println("[FATAL] Failed to create Mutex!");
+    while (1)
+  }
+
   setupDisplay();
   drawSplashScreen();
   setupAcSensors();
   setupBLE();
+
+  xTaskCreatePinnedToCore(
+    displayWorker, "DisplayTask", 4096, NULL, 1, &DisplayTaskHandle, 0);
+
   Serial.println("\n--- System Setup Complete. Waiting for initial interval... ---");
 }
 
 void loop() {
-  bool advanceView = false;
-  unsigned long currentMillis = millis();
-
-  if (currentMillis - lastViewChange >= VIEW_INTERVAL) {
-    advanceView = true;
-  }
-
-  bool reading = digitalRead(BUTTON_PIN);
-  if (reading != lastButtonState) {
-    lastDebounceTime = currentMillis;
-  }
-
-  if ((currentMillis - lastDebounceTime) > DEBOUNCE_DELAY) {
-    static bool buttonProcessed = false;
-    if (reading == LOW && !buttonProcessed) {
-      advanceView = true;
-      buttonProcessed = true;
-    } else if (reading == HIGH) {
-      buttonProcessed = false;
-    }
-  }
-  lastButtonState = reading;
-
-  if (advanceView) {
-    currentView = (currentView + 1) % MAX_VIEWS;
-    lastViewChange = currentMillis;
-    updateDisplay(sysMetrics, currentView);
-  }
-
   switch (currentState) {
 
     case STATE_WAIT_INTERVAL:
@@ -171,50 +156,55 @@ void loop() {
 }
 
 void evaluateContactorLogic() {
-  const unsigned long STALE_TIMEOUT_MS = 5 * 60 * 1000;
-  unsigned long currentMillis = millis();
+  if (xSemaphoreTake(metricsMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    const unsigned long STALE_TIMEOUT_MS = 5 * 60 * 1000;
+    unsigned long currentMillis = millis();
 
-  bool bms1Valid = (bms1Data.lastUpdateTime > 0) && (currentMillis - bms1Data.lastUpdateTime < STALE_TIMEOUT_MS);
-  bool bms2Valid = (bms2Data.lastUpdateTime > 0) && (currentMillis - bms2Data.lastUpdateTime < STALE_TIMEOUT_MS);
+    bool bms1Valid = (bms1Data.lastUpdateTime > 0) && (currentMillis - bms1Data.lastUpdateTime < STALE_TIMEOUT_MS);
+    bool bms2Valid = (bms2Data.lastUpdateTime > 0) && (currentMillis - bms2Data.lastUpdateTime < STALE_TIMEOUT_MS);
 
-  if (bms1Valid && bms2Valid) {
+    if (bms1Valid && bms2Valid) {
+      if (!bms1Data.isConnected || !bms2Data.isConnected) {
+        Serial.println("\n[WARNING] BLE connection lost. Operating on cached BMS data (Grace Period).");
+      }
 
-    if (!bms1Data.isConnected || !bms2Data.isConnected) {
-      Serial.println("\n[WARNING] BLE connection lost. Operating on cached BMS data (Grace Period).");
+      sysMetrics.avgSoc = (bms1Data.soc + bms2Data.soc) / 2;
+      sysMetrics.socDelta = abs(bms1Data.soc - bms2Data.soc);
+      sysMetrics.minVoltage = (bms1Data.voltage < bms2Data.voltage) ? bms1Data.voltage : bms2Data.voltage;
+      sysMetrics.voltageDelta = abs(bms1Data.voltage - bms2Data.voltage);
+      sysMetrics.peakTemp = (bms1Data.maxTemp > bms2Data.maxTemp) ? bms1Data.maxTemp : bms2Data.maxTemp;
+      sysMetrics.netCurrent = bms1Data.current + bms2Data.current;
+      sysMetrics.currentDelta = abs(bms1Data.current - bms2Data.current);
+      sysMetrics.netPower = bms1Data.power + bms2Data.power;
+      sysMetrics.powerDelta = abs(bms1Data.power - bms2Data.power);
+      sysMetrics.acVoltage = acVoltage;
+      sysMetrics.acCurrent = acCurrent;
+      sysMetrics.acPower = acVoltage * acCurrent;
+
+      if (sysMetrics.netCurrent > 1.0) sysMetrics.status = STATUS_CHARGING;
+      else if (sysMetrics.netCurrent < -1.0) sysMetrics.status = STATUS_DISCHARGING;
+      else sysMetrics.status = STATUS_IDLE;
+      xSemaphoreGive(metricsMutex);
+      Serial.println("\n================ SYSTEM METRICS ================");
+      Serial.printf("STATUS   : %s\n", statusToString(sysMetrics.status));
+      Serial.println("------------------------------------------------");
+      Serial.printf("BMS 1    : %.2fV | %6.2fA | %5.0fW | %3d%% | %.1fC\n", bms1Data.voltage, bms1Data.current, bms1Data.power, bms1Data.soc, bms1Data.maxTemp);
+      Serial.printf("BMS 2    : %.2fV | %6.2fA | %5.0fW | %3d%% | %.1fC\n", bms2Data.voltage, bms2Data.current, bms2Data.power, bms2Data.soc, bms2Data.maxTemp);
+      Serial.println("------------------------------------------------");
+      Serial.printf("DELTAS   : Volt:%.3fV | Cur:%.2fA | Pwr:%.0fW\n", sysMetrics.voltageDelta, sysMetrics.currentDelta, sysMetrics.powerDelta);
+      Serial.printf("DC TOTAL : Net: %6.2fA | %5.0fW\n", sysMetrics.netCurrent, sysMetrics.netPower);
+      Serial.printf("AC SENSE : %.1fV | %.2fA | %.0f VA\n", sysMetrics.acVoltage, sysMetrics.acCurrent, sysMetrics.acPower);
+      Serial.printf("HEALTH   : Avg SoC %d%% (Imb %d%%) | Peak Temp %.1fC\n", sysMetrics.avgSoc, sysMetrics.socDelta, sysMetrics.peakTemp);
+      Serial.println("================================================\n");
+
+    } else {
+      sysMetrics.status = STATUS_ERROR;
+      Serial.println("\n[CRITICAL ERROR] BMS Data Timeout (5+ min). Defaulting to safe state.");
+      // digitalWrite(CONTACTOR_PIN, LOW);
     }
-
-    sysMetrics.avgSoc = (bms1Data.soc + bms2Data.soc) / 2;
-    sysMetrics.socDelta = abs(bms1Data.soc - bms2Data.soc);
-    sysMetrics.minVoltage = (bms1Data.voltage < bms2Data.voltage) ? bms1Data.voltage : bms2Data.voltage;
-    sysMetrics.voltageDelta = abs(bms1Data.voltage - bms2Data.voltage);
-    sysMetrics.peakTemp = (bms1Data.maxTemp > bms2Data.maxTemp) ? bms1Data.maxTemp : bms2Data.maxTemp;
-    sysMetrics.netCurrent = bms1Data.current + bms2Data.current;
-    sysMetrics.currentDelta = abs(bms1Data.current - bms2Data.current);
-    sysMetrics.netPower = bms1Data.power + bms2Data.power;
-    sysMetrics.powerDelta = abs(bms1Data.power - bms2Data.power);
-    sysMetrics.acVoltage = acVoltage;
-    sysMetrics.acCurrent = acCurrent;
-    sysMetrics.acPower = acVoltage * acCurrent;
-
-    if (sysMetrics.netCurrent > 1.0) sysMetrics.status = STATUS_CHARGING;
-    else if (sysMetrics.netCurrent < -1.0) sysMetrics.status = STATUS_DISCHARGING;
-    else sysMetrics.status = STATUS_IDLE;
-
-    Serial.println("\n================ SYSTEM METRICS ================");
-    Serial.printf("STATUS   : %s\n", statusToString(sysMetrics.status));
-    Serial.println("------------------------------------------------");
-    Serial.printf("BMS 1    : %.2fV | %6.2fA | %5.0fW | %3d%% | %.1fC\n", bms1Data.voltage, bms1Data.current, bms1Data.power, bms1Data.soc, bms1Data.maxTemp);
-    Serial.printf("BMS 2    : %.2fV | %6.2fA | %5.0fW | %3d%% | %.1fC\n", bms2Data.voltage, bms2Data.current, bms2Data.power, bms2Data.soc, bms2Data.maxTemp);
-    Serial.println("------------------------------------------------");
-    Serial.printf("DELTAS   : Volt:%.3fV | Cur:%.2fA | Pwr:%.0fW\n", sysMetrics.voltageDelta, sysMetrics.currentDelta, sysMetrics.powerDelta);
-    Serial.printf("DC TOTAL : Net: %6.2fA | %5.0fW\n", sysMetrics.netCurrent, sysMetrics.netPower);
-    Serial.printf("AC SENSE : %.1fV | %.2fA | %.0f VA\n", sysMetrics.acVoltage, sysMetrics.acCurrent, sysMetrics.acPower);
-    Serial.printf("HEALTH   : Avg SoC %d%% (Imb %d%%) | Peak Temp %.1fC\n", sysMetrics.avgSoc, sysMetrics.socDelta, sysMetrics.peakTemp);
-    Serial.println("================================================\n");
-
   } else {
-    sysMetrics.status = STATUS_ERROR;
-    Serial.println("\n[CRITICAL ERROR] BMS Data Timeout (5+ min). Defaulting to safe state.");
-    // digitalWrite(CONTACTOR_PIN, LOW);
+    // We couldn't get the lock.
+    // Log an error or just skip this update cycle.
+    Serial.println("[WARN] Core 1 failed to acquire Mutex!");
   }
 }
