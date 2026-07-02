@@ -25,15 +25,9 @@ unsigned long stateTimer = 0;
 unsigned long lastAcRead = 0;
 
 const int BUTTON_PIN = 15;
-const int MAX_VIEWS = 4;
 
+// Shared global view state used by the display task
 int currentView = 0;
-unsigned long lastViewChange = 0;
-const unsigned long VIEW_INTERVAL = 10000;
-
-bool lastButtonState = HIGH;
-unsigned long lastDebounceTime = 0;
-const unsigned long DEBOUNCE_DELAY = 50;
 
 void setup() {
   Serial.begin(115200);
@@ -42,7 +36,7 @@ void setup() {
   metricsMutex = xSemaphoreCreateMutex();
   if (metricsMutex == NULL) {
     Serial.println("[FATAL] Failed to create Mutex!");
-    while (1)
+    while (1);
   }
 
   setupDisplay();
@@ -50,13 +44,22 @@ void setup() {
   setupAcSensors();
   setupBLE();
 
+  // Spawn the Display Worker onto Core 0 (Low priority background UI task)
   xTaskCreatePinnedToCore(
-    displayWorker, "DisplayTask", 4096, NULL, 1, &DisplayTaskHandle, 0);
+    displayWorker,      // Function pointer
+    "DisplayTask",      // Task name string
+    4096,               // Stack depth in bytes
+    NULL,               // Task parameter input
+    1,                  // Task priority
+    &DisplayTaskHandle, // Task handle output
+    0                   // Pin task strictly to Core 0
+  );
 
   Serial.println("\n--- System Setup Complete. Waiting for initial interval... ---");
 }
 
 void loop() {
+  // Core 1 runs the BLE State Machine completely decoupled from display refreshes
   switch (currentState) {
 
     case STATE_WAIT_INTERVAL:
@@ -147,7 +150,6 @@ void loop() {
 
     case STATE_PROCESS_LOGIC:
       evaluateContactorLogic();
-      updateDisplay(sysMetrics, currentView);
       activeBms = nullptr;
       stateTimer = millis();
       currentState = STATE_WAIT_INTERVAL;
@@ -184,7 +186,8 @@ void evaluateContactorLogic() {
       if (sysMetrics.netCurrent > 1.0) sysMetrics.status = STATUS_CHARGING;
       else if (sysMetrics.netCurrent < -1.0) sysMetrics.status = STATUS_DISCHARGING;
       else sysMetrics.status = STATUS_IDLE;
-      xSemaphoreGive(metricsMutex);
+
+      // FIXED: Debug logging pulled outside the raw serial statement blocks 
       Serial.println("\n================ SYSTEM METRICS ================");
       Serial.printf("STATUS   : %s\n", statusToString(sysMetrics.status));
       Serial.println("------------------------------------------------");
@@ -202,9 +205,71 @@ void evaluateContactorLogic() {
       Serial.println("\n[CRITICAL ERROR] BMS Data Timeout (5+ min). Defaulting to safe state.");
       // digitalWrite(CONTACTOR_PIN, LOW);
     }
+    
+    // FIXED: Moved outside the if/else block. Mutex is guaranteed to release in all scenarios!
+    xSemaphoreGive(metricsMutex); 
   } else {
-    // We couldn't get the lock.
-    // Log an error or just skip this update cycle.
     Serial.println("[WARN] Core 1 failed to acquire Mutex!");
+  }
+}
+
+// Thread safe, low priority background UI monitor locked to Core 0
+void displayWorker(void * parameter) {
+  const unsigned long VIEW_INTERVAL = 10000;
+  const unsigned long DEBOUNCE_DELAY = 50;
+  
+  unsigned long lastViewChange = millis();
+  unsigned long lastDebounceTime = 0;
+  bool lastButtonState = HIGH;
+  bool buttonProcessed = false;
+
+  for(;;) {
+    bool advanceView = false;
+    unsigned long currentMillis = millis();
+
+    // 1. Timer-Based Auto Rotate
+    if (currentMillis - lastViewChange >= VIEW_INTERVAL) {
+      advanceView = true;
+    }
+
+    // 2. Physical Debounced Button Read
+    bool reading = digitalRead(BUTTON_PIN);
+    if (reading != lastButtonState) {
+      lastDebounceTime = currentMillis;
+    }
+
+    if ((currentMillis - lastDebounceTime) > DEBOUNCE_DELAY) {
+      if (reading == LOW && !buttonProcessed) {
+        advanceView = true;
+        buttonProcessed = true;
+      } else if (reading == HIGH) {
+        buttonProcessed = false;
+      }
+    }
+    lastButtonState = reading;
+
+    // 3. Process View Layout Wrap-Around
+    if (advanceView) {
+      currentView = (currentView + 1) % 4; // Max 4 views (0 through 3)
+      lastViewChange = currentMillis;
+    }
+
+    // 4. Snapshot Strategy: Lock data, copy struct instantly, unlock immediately
+    SystemMetrics localMetricsSnapshot;
+    bool snapshotValid = false;
+
+    if (xSemaphoreTake(metricsMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      localMetricsSnapshot = sysMetrics;
+      xSemaphoreGive(metricsMutex);
+      snapshotValid = true;
+    }
+
+    // 5. Draw outside the critical section to prevent clogging Core 1
+    if (snapshotValid) {
+      updateDisplay(localMetricsSnapshot, currentView);
+    }
+
+    // Block this task for 100ms. Gives CPU cycles completely back to Core 0's radio stacks.
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 }

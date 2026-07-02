@@ -18,44 +18,15 @@ void setupDisplay() {
 
 void drawSplashScreen() {
   u8g2.clearBuffer();
-  
-  u8g2.setFont(u8g2_font_profont15_tf); 
+
+  u8g2.setFont(u8g2_font_profont15_tf);
   u8g2.drawStr(25, 25, "BMS GATEWAY");
-  
-  u8g2.setFont(u8g2_font_profont11_tf); 
+
+  u8g2.setFont(u8g2_font_profont11_tf);
   u8g2.drawStr(10, 45, "Starting System...");
   u8g2.drawStr(10, 60, "Initializing BLE...");
-  
+
   u8g2.sendBuffer();
-}
-
-void displayWorker(void * parameter) {
-  unsigned long lastLocalViewChange = millis();
-
-  for(;;) {
-    bool advanceView = false;
-    unsigned long currentMillis = millis();
-
-    if (advanceView) {
-      currentView = (currentView + 1) % MAX_VIEWS;
-      lastLocalViewChange = currentMillis;
-    }
-
-    SystemMetrics localMetricsSnapshot;
-    bool snapshotSuccess = false;
-
-    if (xSemaphoreTake(metricsMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-      localMetricsSnapshot = sysMetrics; 
-      xSemaphoreGive(metricsMutex);
-      snapshotSuccess = true;
-    }
-
-    if (snapshotSuccess) {
-      updateDisplay(localMetricsSnapshot, currentView);
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(100)); 
-  }
 }
 
 void drawOverviewScreen(const SystemMetrics& metrics) {
